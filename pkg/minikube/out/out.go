@@ -23,15 +23,19 @@ import (
 	"html"
 	"html/template"
 	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Delta456/box-cli-maker/v2"
 	"github.com/briandowns/spinner"
-	isatty "github.com/mattn/go-isatty"
+	"github.com/mattn/go-isatty"
 
 	"k8s.io/klog/v2"
+	"k8s.io/minikube/pkg/minikube/localpath"
 	"k8s.io/minikube/pkg/minikube/out/register"
 	"k8s.io/minikube/pkg/minikube/style"
 	"k8s.io/minikube/pkg/minikube/translate"
@@ -107,6 +111,31 @@ func Styled(st style.Enum, format string, a ...V) {
 	} else {
 		String(outStyled)
 	}
+}
+
+func boxedCommon(printFunc func(format string, a ...interface{}), format string, a ...V) {
+	box := box.New(box.Config{Py: 1, Px: 4, Type: "Round"})
+	if useColor {
+		box.Config.Color = "Red"
+	}
+	str := Sprintf(style.None, format, a...)
+	printFunc(box.String("", strings.TrimSpace(str)))
+}
+
+// Boxed writes a stylized and templated message in a box to stdout
+func Boxed(format string, a ...V) {
+	boxedCommon(String, format, a...)
+}
+
+// BoxedErr writes a stylized and templated message in a box to stderr
+func BoxedErr(format string, a ...V) {
+	boxedCommon(Err, format, a...)
+}
+
+// Sprintf is used for returning the string (doesn't write anything)
+func Sprintf(st style.Enum, format string, a ...V) string {
+	outStyled, _ := stylized(st, useColor, format, a...)
+	return outStyled
 }
 
 // Infof is used for informational logs (options, env variables, etc)
@@ -312,7 +341,7 @@ func wantsColor(w fdWriter) bool {
 
 // LogEntries outputs an error along with any important log entries.
 func LogEntries(msg string, err error, entries map[string][]string) {
-	DisplayError(msg, err)
+	displayError(msg, err)
 
 	for name, lines := range entries {
 		Step(style.Failure, "Problems detected in {{.entry}}:", V{"entry": name})
@@ -325,8 +354,8 @@ func LogEntries(msg string, err error, entries map[string][]string) {
 	}
 }
 
-// DisplayError prints the error and displays the standard minikube error messaging
-func DisplayError(msg string, err error) {
+// displayError prints the error and displays the standard minikube error messaging
+func displayError(msg string, err error) {
 	klog.Warningf(fmt.Sprintf("%s: %v", msg, err))
 	if JSON {
 		FatalT("{{.msg}}: {{.err}}", V{"msg": translate.T(msg), "err": err})
@@ -336,8 +365,52 @@ func DisplayError(msg string, err error) {
 	ErrT(style.Empty, "")
 	FatalT("{{.msg}}: {{.err}}", V{"msg": translate.T(msg), "err": err})
 	ErrT(style.Empty, "")
-	ErrT(style.Sad, "minikube is exiting due to an error. If the above message is not useful, open an issue:")
-	ErrT(style.URL, "https://github.com/kubernetes/minikube/issues/new/choose")
+	displayGitHubIssueMessage()
+}
+
+func latestLogFilePath() (string, error) {
+	if len(os.Args) < 2 {
+		return "", fmt.Errorf("unable to detect command")
+	}
+	cmd := os.Args[1]
+	if cmd == "start" {
+		return localpath.LastStartLog(), nil
+	}
+
+	tmpdir := os.TempDir()
+	files, err := ioutil.ReadDir(tmpdir)
+	if err != nil {
+		return "", fmt.Errorf("failed to get list of files in tempdir: %v", err)
+	}
+	var lastModName string
+	var lastModTime time.Time
+	for _, file := range files {
+		if !strings.Contains(file.Name(), "minikube_") {
+			continue
+		}
+		if !lastModTime.IsZero() && lastModTime.After(file.ModTime()) {
+			continue
+		}
+		lastModName = file.Name()
+		lastModTime = file.ModTime()
+	}
+	fullPath := filepath.Join(tmpdir, lastModName)
+
+	return fullPath, nil
+}
+
+func displayGitHubIssueMessage() {
+	logPath, err := latestLogFilePath()
+	if err != nil {
+		klog.Warningf("failed to diplay GitHub issue message: %v", err)
+	}
+
+	msg := Sprintf(style.Sad, "If the above advice does not help, please let us know:")
+	msg += Sprintf(style.URL, "https://github.com/kubernetes/minikube/issues/new/choose\n")
+	msg += Sprintf(style.Empty, "Please attach the following file to the GitHub issue:")
+	msg += Sprintf(style.Empty, "- {{.logPath}}", V{"logPath": logPath})
+
+	BoxedErr(msg)
 }
 
 // applyTmpl applies formatting
@@ -365,14 +438,17 @@ func applyTmpl(format string, a ...V) string {
 
 	// escape any outstanding '%' signs so that they don't get interpreted
 	// as a formatting directive down the line
-	out = strings.Replace(out, "%", "%%", -1)
+	out = strings.ReplaceAll(out, "%", "%%")
 	// avoid doubling up in case this function is called multiple times
-	out = strings.Replace(out, "%%%%", "%%", -1)
+	out = strings.ReplaceAll(out, "%%%%", "%%")
 	return out
 }
 
 // Fmt applies formatting and translation
 func Fmt(format string, a ...V) string {
 	format = translate.T(format)
+	if len(a) == 0 {
+		return format
+	}
 	return applyTmpl(format, a...)
 }
