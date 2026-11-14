@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/viper"
 
 	"k8s.io/klog/v2"
+	"k8s.io/minikube/cmd/minikube/cmd/flags"
 	"k8s.io/minikube/pkg/minikube/cluster"
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/constants"
@@ -49,9 +50,10 @@ var pauseCmd = &cobra.Command{
 	Run:   runPause,
 }
 
-func runPause(cmd *cobra.Command, args []string) {
+func runPause(_ *cobra.Command, _ []string) {
+	options := flags.CommandOptions()
 	out.SetJSON(outputFormat == "json")
-	co := mustload.Running(ClusterFlagValue())
+	co := mustload.Running(ClusterFlagValue(), options)
 	register.SetEventLogPath(localpath.EventLog(ClusterFlagValue()))
 	register.Reg.SetStep(register.Pausing)
 
@@ -97,14 +99,14 @@ func runPause(cmd *cobra.Command, args []string) {
 
 	register.Reg.SetStep(register.Done)
 	if namespaces == nil {
-		out.Step(style.Unpause, "Paused {{.count}} containers", out.V{"count": len(ids)})
+		out.Step(style.Pause, "Paused {{.count}} containers", out.V{"count": len(ids)})
 	} else {
-		out.Step(style.Unpause, "Paused {{.count}} containers in: {{.namespaces}}", out.V{"count": len(ids), "namespaces": strings.Join(namespaces, ", ")})
+		out.Step(style.Pause, "Paused {{.count}} containers in: {{.namespaces}}", out.V{"count": len(ids), "namespaces": strings.Join(namespaces, ", ")})
 	}
 }
 
 func init() {
-	pauseCmd.Flags().StringSliceVarP(&namespaces, "--namespaces", "n", constants.DefaultNamespaces, "namespaces to pause")
+	pauseCmd.Flags().StringSliceVarP(&namespaces, "namespaces", "n", constants.DefaultNamespaces, "namespaces to pause")
 	pauseCmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "If set, pause all namespaces")
 	pauseCmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Format to print stdout in. Options include: [text,json]")
 }

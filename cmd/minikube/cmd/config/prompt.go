@@ -21,9 +21,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"slices"
 	"strings"
 
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 	"k8s.io/klog/v2"
 	"k8s.io/minikube/pkg/minikube/out"
 )
@@ -36,7 +37,7 @@ func AskForYesNoConfirmation(s string, posResponses, negResponses []string) bool
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		out.String("%s [y/n]: ", s)
+		out.Stringf("%s [y/n]: ", s)
 
 		response, err := reader.ReadString('\n')
 		if err != nil {
@@ -44,9 +45,9 @@ func AskForYesNoConfirmation(s string, posResponses, negResponses []string) bool
 		}
 
 		switch r := strings.ToLower(strings.TrimSpace(response)); {
-		case containsString(posResponses, r):
+		case slices.Contains(posResponses, r):
 			return true
-		case containsString(negResponses, r):
+		case slices.Contains(negResponses, r):
 			return false
 		default:
 			out.Err("Please type yes or no:")
@@ -78,7 +79,7 @@ func AskForStaticValueOptional(s string) string {
 }
 
 func getStaticValue(reader *bufio.Reader, s string) string {
-	out.String("%s", s)
+	out.String(s)
 
 	response, err := reader.ReadString('\n')
 	if err != nil {
@@ -94,15 +95,14 @@ func concealableAskForStaticValue(readWriter io.ReadWriter, promptString string,
 		var (
 			response string
 			err      error
-			term     *terminal.Terminal
 		)
 
 		if hidden {
-			term = terminal.NewTerminal(readWriter, "")
-			response, err = term.ReadPassword(promptString)
+			t := term.NewTerminal(readWriter, "")
+			response, err = t.ReadPassword(promptString)
 		} else {
-			term = terminal.NewTerminal(readWriter, promptString)
-			response, err = term.ReadLine()
+			t := term.NewTerminal(readWriter, promptString)
+			response, err = t.ReadLine()
 		}
 
 		if err != nil {
@@ -121,37 +121,21 @@ func concealableAskForStaticValue(readWriter io.ReadWriter, promptString string,
 func AskForPasswordValue(s string) string {
 
 	stdInFd := int(os.Stdin.Fd())
-	oldState, err := terminal.MakeRaw(stdInFd)
+	oldState, err := term.MakeRaw(stdInFd)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() {
-		if err := terminal.Restore(stdInFd, oldState); err != nil {
+		if err := term.Restore(stdInFd, oldState); err != nil {
 			klog.Errorf("terminal restore failed: %v", err)
 		}
 	}()
 
 	result, err := concealableAskForStaticValue(os.Stdin, s, true)
 	if err != nil {
-		log.Fatal(err)
+		defer log.Fatal(err)
 	}
 	return result
-}
-
-// posString returns the first index of element in slice.
-// If slice does not contain element, returns -1.
-func posString(slice []string, element string) int {
-	for index, elem := range slice {
-		if elem == element {
-			return index
-		}
-	}
-	return -1
-}
-
-// containsString returns true if slice contains element
-func containsString(slice []string, element string) bool {
-	return posString(slice, element) != -1
 }
 
 // AskForStaticValidatedValue asks for a single value to enter and check for valid input

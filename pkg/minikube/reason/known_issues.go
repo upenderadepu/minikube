@@ -14,25 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-/*
-Copyright 2019 The Kubernetes Authors All rights reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY matchND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package reason
 
 import (
+	"fmt"
+	"os"
 	"regexp"
 
 	"k8s.io/minikube/pkg/minikube/style"
@@ -193,6 +179,37 @@ var hostIssues = []match{
 	},
 	{
 		Kind: Kind{
+			ID:       "HOST_CGROUP_NOT_SUPPORTED",
+			ExitCode: ExHostUnsupported,
+			Advice: `CGroup allocation is not available in your environment. You might be running minikube in a nested container. Try running:
+			
+	minikube start --extra-config=kubelet.cgroups-per-qos=false --extra-config=kubelet.enforce-node-allocatable=""
+
+			
+			`,
+			Issues: []int{12232},
+		},
+		Regexp: re(`Failed to start ContainerManager" err="Unit kubepods.slice already exists.`),
+		GOOS:   []string{"linux"},
+	},
+	{
+		Kind: Kind{
+			ID:       "HOST_ROOT_CGROUP",
+			ExitCode: ExHostUnsupported,
+			Advice: `CGroup allocation is not available in your environment, You might be running minikube in a nested container. Try running:
+			
+	minikube start --extra-config=kubelet.cgroups-per-qos=false --extra-config=kubelet.enforce-node-allocatable=""
+
+			
+			`,
+			Issues: []int{12232},
+		},
+		Regexp: re(`Failed to start ContainerManager" err="failed to initialize top level QOS containers: root container [kubepods] doesn't exist`),
+		GOOS:   []string{"linux"},
+	},
+
+	{
+		Kind: Kind{
 			ID:       "HOST_PIDS_CGROUP",
 			ExitCode: ExHostUnsupported,
 			Advice:   "Ensure that the required 'pids' cgroup is enabled on your host: grep pids /proc/cgroups",
@@ -204,6 +221,22 @@ var hostIssues = []match{
 	{
 		Kind:   HostHomePermission,
 		Regexp: re(`/.minikube/.*: permission denied`),
+	},
+	{
+		Kind: Kind{
+			ID:       "HOST_CPU_DELEGATION",
+			ExitCode: ExHostUnsupported,
+			Advice: `Run the following:
+$ sudo mkdir -p /etc/systemd/system/user@.service.d
+$ cat <<EOF | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+[Service]
+Delegate=cpu cpuset io memory pids
+EOF
+$ sudo systemctl daemon-reload`,
+			Issues: []int{14871},
+		},
+		Regexp: re(`UserNS: cpu controller needs to be delegated`),
+		GOOS:   []string{"linux"},
 	},
 }
 
@@ -283,48 +316,27 @@ var providerIssues = []match{
 		GOOS:   []string{"windows"},
 		Regexp: re(`docker:.*Mounts denied: EOF`),
 	},
-
-	// Hyperkit hypervisor
 	{
 		Kind: Kind{
-			ID:       "PR_HYPERKIT_NO_IP",
+			ID:       "PR_DOCKER_VER_UNSUPPORTED",
 			ExitCode: ExProviderError,
-			Advice:   "Install the latest hyperkit binary, and run 'minikube delete'",
-			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/hyperkit/",
-			Issues:   []int{1926, 4206},
+			Advice:   "Update Docker to the latest minor version, this version is unsupported",
+			Issues:   []int{10362},
 		},
-		Regexp: re(`IP address never found in dhcp leases file Temporary Error: Could not find an IP address for`),
-		GOOS:   []string{"darwin"},
+		Regexp: re(`unexpected "=" in operand`),
 	},
 	{
 		Kind: Kind{
-			ID:       "PR_HYPERKIT_NOT_FOUND",
-			ExitCode: ExProviderNotFound,
-			Advice:   "Please install the minikube hyperkit VM driver, or select an alternative --driver",
-			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/hyperkit/",
-		},
-		Regexp: re(`Driver "hyperkit" not found.`),
-		GOOS:   []string{"darwin"},
-	},
-	{
-		Kind: Kind{
-			ID:       "PR_HYPERKIT_VMNET_FRAMEWORK",
+			ID:       "PR_DOCKER_FILE_SHARING",
 			ExitCode: ExProviderError,
-			Advice:   "Hyperkit networking is broken. Upgrade to the latest hyperkit version and/or Docker for Desktop. Alternatively, you may choose an alternate --driver",
-			Issues:   []int{6028, 5594},
+			Advice: fmt.Sprintf(`There are a couple ways to enable the required file sharing:
+1. Enable "Use the WSL 2 based engine" in Docker Desktop
+or
+2. Enable file sharing in Docker Desktop for the %s%s directory`, os.Getenv("HOMEDRIVE"), os.Getenv("HOMEPATH")),
+			URL: "https://docs.docker.com/desktop/windows/#file-sharing",
 		},
-		Regexp: re(`error from vmnet.framework: -1`),
-		GOOS:   []string{"darwin"},
-	},
-	{
-		Kind: Kind{
-			ID:       "PR_HYPERKIT_CRASHED",
-			ExitCode: ExProviderError,
-			Advice:   "Hyperkit is broken. Upgrade to the latest hyperkit version and/or Docker for Desktop. Alternatively, you may choose an alternate --driver",
-			Issues:   []int{6079, 5780},
-		},
-		Regexp: re(`hyperkit crashed!`),
-		GOOS:   []string{"darwin"},
+		GOOS:   []string{"windows"},
+		Regexp: re(`Post "http://ipc/filesharing/share": context deadline exceeded`),
 	},
 
 	// Hyper-V hypervisor
@@ -364,7 +376,7 @@ var providerIssues = []match{
 		Kind: Kind{
 			ID:       "PR_HYPERV_MODULE_NOT_INSTALLED",
 			ExitCode: ExProviderNotFound,
-			Advice:   "Run: 'Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-Tools-All'",
+			Advice:   "Run: 'Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-Tools-All -All'",
 			Issues:   []int{9040},
 			URL:      "https://www.altaro.com/hyper-v/install-hyper-v-powershell-module/",
 		},
@@ -402,7 +414,7 @@ var providerIssues = []match{
 			ID:       "PR_KVM_CAPABILITIES",
 			ExitCode: ExProviderUnavailable,
 			Advice:   "Your host does not support KVM virtualization. Ensure that qemu-kvm is installed, and run 'virt-host-validate' to debug the problem",
-			URL:      "http://mikko.repolainen.fi/documents/virtualization-with-kvm",
+			URL:      "https://mikko.repolainen.fi/documents/virtualization-with-kvm",
 			Issues:   []int{2991},
 		},
 		Regexp: re(`invalid argument: could not find capabilities for domaintype=kvm`),
@@ -538,6 +550,16 @@ var providerIssues = []match{
 		},
 		Regexp: re(`VBoxManage not found. Make sure VirtualBox is installed and VBoxManage is in the path`),
 	},
+
+	// QEMU
+	{
+		Kind: Kind{
+			ID:       "PR_QEMU_SOCKET_VMNET_DENIED",
+			ExitCode: ExProviderError,
+			Advice:   "socket_vmnet was installed with an incorrect group, delete this cluster 'minikube delete' and update the group 'sudo chown root:$(id -ng) /var/run/socket_vmnet' and try again.",
+		},
+		Regexp: re(`Failed to connect to "/var/run/socket_vmnet": Permission denied`),
+	},
 }
 
 // driverIssues are specific to a libmachine driver
@@ -608,7 +630,7 @@ var driverIssues = []match{
 			ID:       "DRV_HYPERV_NO_VSWITCH",
 			ExitCode: ExDriverConfig,
 			Advice:   "Configure an external network switch following the official documentation, then add `--hyperv-virtual-switch=<switch-name>` to `minikube start`",
-			URL:      "https://docs.docker.com/machine/drivers/hyper-v/",
+			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/hyperv/",
 		},
 		Regexp: re(`no External vswitch found. A valid vswitch must be available for this command to run.`),
 		GOOS:   []string{"windows"},
@@ -618,7 +640,7 @@ var driverIssues = []match{
 			ID:       "DRV_HYPERV_VSWITCH_NOT_FOUND",
 			ExitCode: ExDriverUsage,
 			Advice:   "Confirm that you have supplied the correct value to --hyperv-virtual-switch using the 'Get-VMSwitch' command",
-			URL:      "https://docs.docker.com/machine/drivers/hyper-v/",
+			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/hyperv/",
 		},
 		Regexp: re(`precreate: vswitch.*not found`),
 		GOOS:   []string{"windows"},
@@ -628,7 +650,7 @@ var driverIssues = []match{
 			ID:       "DRV_HYPERV_POWERSHELL_NOT_FOUND",
 			ExitCode: ExDriverUnavailable,
 			Advice:   "To start minikube with Hyper-V, Powershell must be in your PATH`",
-			URL:      "https://docs.docker.com/machine/drivers/hyper-v/",
+			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/hyperv/",
 		},
 		Regexp: re(`Powershell was not found in the path`),
 		GOOS:   []string{"windows"},
@@ -769,7 +791,7 @@ var internetIssues = []match{
 			URL:      proxyDoc,
 			Issues:   []int{3860},
 		},
-		Regexp: re(`gcr.io.*443: connect: invalid argument`),
+		Regexp: re(`gcr.io\.*443: connect: invalid argument`),
 	},
 	{
 		Kind: Kind{
@@ -962,7 +984,7 @@ var guestIssues = []match{
 			ID:       "GUEST_FILE_IN_USE",
 			ExitCode: ExGuestConflict,
 			Advice:   "Another program is using a file required by minikube. If you are using Hyper-V, try stopping the minikube VM from within the Hyper-V manager",
-			URL:      "https://docs.docker.com/machine/drivers/hyper-v/",
+			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/hyperv/",
 			Issues:   []int{7300},
 		},
 		Regexp: re(`The process cannot access the file because it is being used by another process`),
@@ -994,6 +1016,65 @@ var guestIssues = []match{
 			Issues:   []int{9175},
 		},
 		Regexp: re(`configuration.*corrupt`),
+	},
+	{
+		Kind: Kind{
+			ID:       "GUEST_STORAGE_DRIVER_BTRFS",
+			ExitCode: ExGuestUnsupported,
+			Advice:   "This is a known issue with BTRFS storage driver, there is a workaround, please checkout the issue on GitHub",
+			Issues:   []int{11235},
+		},
+		Regexp: re(`'/var/lib/dpkg': No such file or directory`),
+	},
+	{
+		Kind: Kind{
+			ID:       "GUEST_STORAGE_DRIVER_BTRFS",
+			ExitCode: ExGuestUnsupported,
+			Advice:   "minikube does not support the BTRFS storage driver yet, there is a workaround, add the following flag to your start command `--feature-gates=\"LocalStorageCapacityIsolation=false\"`",
+			Issues:   []int{7923},
+		},
+		Regexp: re(`unsupported graph driver: btrfs`),
+	},
+	{
+		Kind: Kind{
+			ID:       "GUEST_INCORRECT_ARCH",
+			ExitCode: ExGuestUnsupported,
+			Advice:   "You might be using an amd64 version of minikube on a Apple Silicon Mac, use the arm64 version of minikube instead",
+			Issues:   []int{10243},
+		},
+		Regexp: re(`qemu: uncaught target signal 11 (Segmentation fault) - core dumped`),
+	},
+	{
+		Kind: Kind{
+			ID:       "GUEST_CNI_INCOMPATIBLE",
+			ExitCode: ExGuestUnsupported,
+			Advice:   "Bridge CNI is incompatible with multi-node clusters, use a different CNI",
+		},
+		Regexp: re(`bridge CNI is incompatible with multi-node clusters`),
+	},
+	{
+		Kind: Kind{
+			ID:       "GUEST_PROVISION_ACQUIRE_LOCK",
+			ExitCode: ExGuestError,
+			Advice:   "Please try purging minikube using `minikube delete --all --purge`",
+			Issues:   []int{11022},
+		},
+		Regexp: re(`failed to acquire bootstrap client lock`),
+	},
+	{
+		Kind: Kind{
+			ID:       "GUEST_PROVISION_CP_PUBKEY",
+			ExitCode: ExGuestError,
+		},
+		Regexp: re(`copying pub key`),
+	},
+	{
+		// This should be checked last
+		Kind: Kind{
+			ID:       "GUEST_PROVISION_EXIT_UNEXPECTED",
+			ExitCode: ExGuestError,
+		},
+		Regexp: re(`exited unexpectedly`),
 	},
 }
 
@@ -1038,6 +1119,26 @@ var runtimeIssues = []match{
 		},
 		Regexp: re(`sudo systemctl start docker: exit status 5`),
 		GOOS:   []string{"linux"},
+	},
+	{
+		Kind: Kind{
+			ID:       "RT_DOCKER_MISSING_CRI_DOCKER_NONE",
+			ExitCode: ExRuntimeUnavailable,
+			Advice:   `Using Kubernetes v1.24+ with the Docker runtime requires cri-docker to be installed`,
+			URL:      "https://minikube.sigs.k8s.io/docs/reference/drivers/none",
+			Issues:   []int{14410},
+		},
+		Regexp: re(`Unit file cri-docker\.socket does not exist`),
+		GOOS:   []string{"linux"},
+	},
+	{
+		Kind: Kind{
+			ID:       "RT_DOCKER_MISSING_CRI_DOCKER",
+			ExitCode: ExRuntimeUnavailable,
+			Advice:   `This cluster was created before minikube v1.26.0 and doesn't have cri-docker installed. Please run 'minikube delete' and then start minikube again`,
+			Issues:   []int{14410},
+		},
+		Regexp: re(`cannot stat '\/var\/run\/cri-dockerd\.sock': No such file or directory`),
 	},
 	{
 		Kind: Kind{
@@ -1110,6 +1211,16 @@ var controlPlaneIssues = []match{
 		},
 		Regexp: re(`apiServer.certSANs: Invalid value`),
 	},
+	{
+		Kind: Kind{
+			ID:           "K8S_UNHEALTHY_CONTROL_PLANE",
+			ExitCode:     ExControlPlaneTimeout,
+			Advice:       "Control Plane could not update, try minikube delete --all --purge",
+			NewIssueLink: true,
+			Issues:       []int{11417},
+		},
+		Regexp: re(`controlPlane never updated to`),
+	},
 }
 
 // serviceIssues are issues with services running on top of Kubernetes
@@ -1127,7 +1238,7 @@ var serviceIssues = []match{
 		Kind: Kind{
 			ID:       "SVC_OPEN_NOT_FOUND",
 			ExitCode: ExSvcNotFound,
-			Advice:   "Use 'kubect get po -A' to find the correct and namespace name",
+			Advice:   "Use 'kubectl get po -A' to find the correct and namespace name",
 			Issues:   []int{5836},
 		},
 		Regexp: re(`Error opening service.*not found`),

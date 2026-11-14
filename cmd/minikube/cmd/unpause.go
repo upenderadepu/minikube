@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/viper"
 
 	"k8s.io/klog/v2"
+	"k8s.io/minikube/cmd/minikube/cmd/flags"
 	"k8s.io/minikube/pkg/minikube/cluster"
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/constants"
@@ -39,13 +40,15 @@ import (
 
 // unpauseCmd represents the docker-pause command
 var unpauseCmd = &cobra.Command{
-	Use:   "unpause",
-	Short: "unpause Kubernetes",
-	Run: func(cmd *cobra.Command, args []string) {
+	Use:     "unpause",
+	Aliases: []string{"resume"},
+	Short:   "unpause Kubernetes",
+	Run: func(_ *cobra.Command, _ []string) {
+		options := flags.CommandOptions()
 		cname := ClusterFlagValue()
 		register.SetEventLogPath(localpath.EventLog(cname))
 
-		co := mustload.Running(cname)
+		co := mustload.Running(cname, options)
 		out.SetJSON(outputFormat == "json")
 		register.Reg.SetStep(register.Unpausing)
 
@@ -69,7 +72,7 @@ var unpauseCmd = &cobra.Command{
 				name = co.Config.Name
 			}
 
-			out.Step(style.Pause, "Unpausing node {{.name}} ... ", out.V{"name": name})
+			out.Step(style.Unpause, "Unpausing node {{.name}} ... ", out.V{"name": name})
 
 			machineName := config.MachineName(*co.Config, n)
 			host, err := machine.LoadHost(co.API, machineName)
@@ -97,15 +100,15 @@ var unpauseCmd = &cobra.Command{
 		register.Reg.SetStep(register.Done)
 
 		if namespaces == nil {
-			out.Step(style.Pause, "Unpaused {{.count}} containers", out.V{"count": len(ids)})
+			out.Step(style.Unpause, "Unpaused {{.count}} containers", out.V{"count": len(ids)})
 		} else {
-			out.Step(style.Pause, "Unpaused {{.count}} containers in: {{.namespaces}}", out.V{"count": len(ids), "namespaces": strings.Join(namespaces, ", ")})
+			out.Step(style.Unpause, "Unpaused {{.count}} containers in: {{.namespaces}}", out.V{"count": len(ids), "namespaces": strings.Join(namespaces, ", ")})
 		}
 	},
 }
 
 func init() {
-	unpauseCmd.Flags().StringSliceVarP(&namespaces, "--namespaces", "n", constants.DefaultNamespaces, "namespaces to unpause")
+	unpauseCmd.Flags().StringSliceVarP(&namespaces, "namespaces", "n", constants.DefaultNamespaces, "namespaces to unpause")
 	unpauseCmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "If set, unpause all namespaces")
 	unpauseCmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Format to print stdout in. Options include: [text,json]")
 }

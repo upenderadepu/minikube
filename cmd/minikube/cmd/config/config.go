@@ -75,8 +75,8 @@ var settings = []Setting{
 	},
 	{
 		name:        "cpus",
-		set:         SetInt,
-		validations: []setFn{IsPositive},
+		set:         SetString,
+		validations: []setFn{IsValidCPUs},
 		callbacks:   []setFn{RequiresRestartMsg},
 	},
 	{
@@ -93,7 +93,7 @@ var settings = []Setting{
 	{
 		name:        "memory",
 		set:         SetString,
-		validations: []setFn{IsValidDiskSize},
+		validations: []setFn{IsValidMemory},
 		callbacks:   []setFn{RequiresRestartMsg},
 	},
 	{
@@ -102,8 +102,9 @@ var settings = []Setting{
 		validations: []setFn{IsValidPath},
 	},
 	{
-		name: "kubernetes-version",
-		set:  SetString,
+		name:          "kubernetes-version",
+		set:           SetString,
+		validDefaults: supportedKubernetesVersions,
 	},
 	{
 		name:        "iso-url",
@@ -115,23 +116,19 @@ var settings = []Setting{
 		set:  SetBool,
 	},
 	{
+		name: config.WantBetaUpdateNotification,
+		set:  SetBool,
+	},
+	{
 		name: config.ReminderWaitPeriodInHours,
 		set:  SetInt,
 	},
 	{
-		name: config.WantReportError,
-		set:  SetBool,
-	},
-	{
-		name: config.WantReportErrorPrompt,
-		set:  SetBool,
-	},
-	{
-		name: config.WantKubectlDownloadMsg,
-		set:  SetBool,
-	},
-	{
 		name: config.WantNoneDriverWarning,
+		set:  SetBool,
+	},
+	{
+		name: config.WantVirtualBoxDriverWarning,
 		set:  SetBool,
 	},
 	{
@@ -140,15 +137,7 @@ var settings = []Setting{
 	},
 	{
 		name: Bootstrapper,
-		set:  SetString, //TODO(r2d4): more validation here?
-	},
-	{
-		name: config.ShowDriverDeprecationNotification,
-		set:  SetBool,
-	},
-	{
-		name: config.ShowBootstrapperDeprecationNotification,
-		set:  SetBool,
+		set:  SetString,
 	},
 	{
 		name: "insecure-registry",
@@ -168,11 +157,28 @@ var settings = []Setting{
 		setMap: SetMap,
 	},
 	{
-		name: "embed-certs",
+		name: config.EmbedCerts,
 		set:  SetBool,
 	},
 	{
 		name: "native-ssh",
+		set:  SetBool,
+	},
+	{
+		name: config.Rootless,
+		set:  SetBool,
+	},
+	{
+		name: config.MaxAuditEntries,
+		set:  SetInt,
+	},
+	{
+		name:        config.DNSServers,
+		set:         SetStringSlice,
+		validations: []setFn{IsValidIPAddressSlice},
+	},
+	{
+		name: config.MDNS,
 		set:  SetBool,
 	},
 }
@@ -183,7 +189,7 @@ var ConfigCmd = &cobra.Command{
 	Short: "Modify persistent configuration values",
 	Long: `config modifies minikube config files using subcommands like "minikube config set driver kvm2"
 Configurable fields: ` + "\n\n" + configurableFields(),
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(cmd *cobra.Command, _ []string) {
 		if err := cmd.Help(); err != nil {
 			klog.ErrorS(err, "help")
 		}

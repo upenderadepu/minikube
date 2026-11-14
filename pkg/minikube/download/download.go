@@ -17,40 +17,76 @@ limitations under the License.
 package download
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/go-getter"
-	"github.com/pkg/errors"
+
 	"k8s.io/klog/v2"
+	"k8s.io/minikube/pkg/minikube/detect"
 	"k8s.io/minikube/pkg/minikube/out"
+	"k8s.io/minikube/pkg/minikube/style"
+	"k8s.io/minikube/pkg/util/lock"
 )
 
 var (
-	mockMode = false
+	// DownloadMock is called instead of the download implementation if not nil.
+	DownloadMock func(src, dst string) error
+	checkCache   = os.Stat
+
+	aliyunMirror = "kubernetes.oss-cn-hangzhou.aliyuncs.com"
+	downloadHost = "storage.googleapis.com"
+
+	releaseHost = "dl.k8s.io"
+	releasePath = ""
 )
 
-// EnableMock allows tests to selectively enable if downloads are mocked
-func EnableMock(b bool) {
-	mockMode = b
+// SetAliyunMirror set the download host for Aliyun mirror
+func SetAliyunMirror() {
+	downloadHost = aliyunMirror
+
+	releaseHost = downloadHost
+	releasePath = "/kubernetes-release"
+}
+
+// CreateDstDownloadMock is the default mock implementation of download.
+func CreateDstDownloadMock(_, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+
+	f, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // download is a well-configured atomic download function
-func download(src string, dst string) error {
-	progress := getter.WithProgress(DefaultProgressBar)
-	if out.JSON {
-		progress = getter.WithProgress(DefaultJSONOutput)
+func download(src, dst string, options ...getter.ClientOption) error {
+	var clientOptions []getter.ClientOption
+	if out.IsTerminal(os.Stdout) && !detect.GithubActionRunner() {
+		progress := getter.WithProgress(DefaultProgressBar)
+		if out.JSON {
+			progress = getter.WithProgress(DefaultJSONOutput)
+		}
+		clientOptions = []getter.ClientOption{progress}
+	} else {
+		clientOptions = []getter.ClientOption{}
 	}
+	clientOptions = append(clientOptions, options...)
 	tmpDst := dst + ".download"
 	client := &getter.Client{
 		Src:     src,
 		Dst:     tmpDst,
 		Dir:     false,
 		Mode:    getter.ClientModeFile,
-		Options: []getter.ClientOption{progress},
+		Options: clientOptions,
 		Getters: map[string]getter.Getter{
 			"file":  &getter.FileGetter{Copy: false},
 			"http":  &getter.HttpGetter{Netrc: false},
@@ -59,30 +95,27 @@ func download(src string, dst string) error {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return errors.Wrap(err, "mkdir")
+		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	// Don't bother with getter.MockGetter, as we don't provide a way to inspect the outcome
-	if mockMode {
+	if DownloadMock != nil {
 		klog.Infof("Mock download: %s -> %s", src, dst)
-		// Callers expect the file to exist
-		_, err := os.Create(dst)
-		return err
+		return DownloadMock(src, dst)
 	}
 
 	// Politely prevent tests from shooting themselves in the foot
 	if withinUnitTest() {
-		return fmt.Errorf("unmocked download under test")
+		return errors.New("unmocked download under test")
 	}
 
 	klog.Infof("Downloading: %s -> %s", src, dst)
 	if err := client.Get(); err != nil {
-		return errors.Wrapf(err, "getter: %+v", client)
+		return fmt.Errorf("getter: %+v: %w", client, err)
 	}
 	return os.Rename(tmpDst, dst)
 }
 
-// withinUnitTset detects if we are in running within a unit-test
+// withinUnitTest detects if we are in running within a unit-test
 func withinUnitTest() bool {
 	// Nope, it's the integration test
 	if flag.Lookup("minikube-start-args") != nil || strings.HasPrefix(filepath.Base(os.Args[0]), "e2e-") {
@@ -90,4 +123,36 @@ func withinUnitTest() bool {
 	}
 
 	return flag.Lookup("test.v") != nil || strings.HasSuffix(os.Args[0], "test")
+}
+
+// lockDownload locks `file` if possible and returns a releaser that must be called to release the lock.
+func lockDownload(file string) (lock.Releaser, error) {
+	type retPair struct {
+		lock.Releaser
+		error
+	}
+	lockChannel := make(chan retPair)
+
+	go func() {
+		spec := lock.PathMutexSpec(file)
+		spec.Timeout = 5 * time.Minute
+		releaser, err := lock.Acquire(spec)
+		if err != nil {
+			lockChannel <- retPair{nil, fmt.Errorf("failed to acquire lock \"%s\": %+v: %w", file, spec, err)}
+			return
+		}
+		lockChannel <- retPair{releaser, err}
+	}()
+
+	select {
+	case r := <-lockChannel:
+		return r.Releaser, r.error
+	case <-time.After(time.Millisecond * 100):
+		out.Step(style.WaitingWithSpinner, "Another minikube instance is downloading dependencies... ")
+	}
+
+	// lock.PathMutexSpec returns a spec including a 60s timeout. Therefore, this
+	// will not block indefinitely.
+	r := <-lockChannel
+	return r.Releaser, r.error
 }

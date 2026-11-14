@@ -1,6 +1,6 @@
 ---
 title: "Ingress nginx for TCP and UDP services"
-linkTitle: "Ingress nginx for TCP and UDP services"
+linkTitle: "Ingress Nginx for TCP and UDP Services"
 weight: 1
 date: 2019-08-15
 description: >
@@ -121,7 +121,7 @@ kubectl apply -f redis-service.yaml
 To add a TCP service to the nginx ingress controller you can run the following command:
 
 ```shell
-kubectl patch configmap tcp-services -n kube-system --patch '{"data":{"6379":"default/redis-service:6379"}}'
+kubectl patch configmap tcp-services -n ingress-nginx --patch '{"data":{"6379":"default/redis-service:6379"}}'
 ```
 
 Where:
@@ -133,7 +133,7 @@ Where:
 We can verify that our resource was patched with the following command:
 
 ```shell
-kubectl get configmap tcp-services -n kube-system -o yaml
+kubectl get configmap tcp-services -n ingress-nginx -o yaml
 ```
 
 We should see something like this:
@@ -148,9 +148,9 @@ metadata:
   labels:
     addonmanager.kubernetes.io/mode: EnsureExists
   name: tcp-services
-  namespace: kube-system
+  namespace: ingress-nginx
   resourceVersion: "2857"
-  selfLink: /api/v1/namespaces/kube-system/configmaps/tcp-services
+  selfLink: /api/v1/namespaces/ingress-nginx/configmaps/tcp-services
   uid: 4f7fac22-e467-11e9-b543-080027057910
 ```
 
@@ -183,7 +183,7 @@ Create a file called `ingress-nginx-controller-patch.yaml` and paste the content
 Next apply the changes with the following command:
 
 ```shell
-kubectl patch deployment ingress-nginx-controller --patch "$(cat ingress-nginx-controller-patch.yaml)" -n kube-system
+kubectl patch deployment ingress-nginx-controller --patch "$(cat ingress-nginx-controller-patch.yaml)" -n ingress-nginx
 ```
 
 ### Test your connection
@@ -202,6 +202,16 @@ Connected to 192.168.99.179.
 Escape character is '^]'
 ```
 
+You can chat with the redis service:
+
+```text
+SET minikube:1 "it works!"
++OK
+GET minikube:1
+$9
+it works!
+```
+
 To exit telnet enter the `Ctrl` key and `]` at the same time. Then type `quit` and press enter.
 
 If you were not able to connect please review your steps above.
@@ -211,8 +221,8 @@ If you were not able to connect please review your steps above.
 In the above example we did the following:
 
 - Created a redis deployment and service in the `default` namespace
-- Patched the `tcp-services` configmap in the `kube-system` namespace
-- Patched the `ingress-nginx-controller` deployment in the `kube-system` namespace
+- Patched the `tcp-services` configmap in the `ingress-nginx` namespace
+- Patched the `ingress-nginx-controller` deployment in the `ingress-nginx` namespace
 - Connected to our service from the host via port 6379
 
 You can apply the same steps that were applied to `tcp-services` to the `udp-services` configmap as well if you have a
@@ -228,5 +238,4 @@ for the latest info on these potential changes.
 
 ## Related articles
 
-- [Routing traffic multiple services on ports 80 and 443 in minikube with the Kubernetes Ingress resource](https://kubernetes.io/docs/tasks/access-application-cluster/ingress-minikube/)
 - [Use port forwarding to access applications in a cluster](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/)

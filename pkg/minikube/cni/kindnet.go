@@ -18,10 +18,10 @@ package cni
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"text/template"
 
-	"github.com/pkg/errors"
 	"k8s.io/minikube/pkg/minikube/assets"
 	"k8s.io/minikube/pkg/minikube/bootstrapper/images"
 	"k8s.io/minikube/pkg/minikube/config"
@@ -45,7 +45,24 @@ rules:
       - ""
     resources:
       - nodes
+      - namespaces
+      - pods
     verbs:
+      - list
+      - watch
+      - patch
+  - apiGroups:
+     - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+  - apiGroups:
+      -  networking.k8s.io
+    resources:
+      - networkpolicies
+    verbs:
+      - get
       - list
       - watch
 ---
@@ -130,7 +147,8 @@ spec:
       volumes:
       - name: cni-cfg
         hostPath:
-          path: /etc/cni/net.d
+          path: {{.CNIConfDir}}
+          type: DirectoryOrCreate
       - name: xtables-lock
         hostPath:
           path: /run/xtables.lock
@@ -158,6 +176,7 @@ func (c KindNet) manifest() (assets.CopyableFile, error) {
 		DefaultRoute: "0.0.0.0/0", // assumes IPv4
 		PodCIDR:      DefaultPodCIDR,
 		ImageName:    images.KindNet(c.cc.KubernetesConfig.ImageRepository),
+		CNIConfDir:   DefaultConfDir,
 	}
 
 	b := bytes.Buffer{}
@@ -170,14 +189,13 @@ func (c KindNet) manifest() (assets.CopyableFile, error) {
 // Apply enables the CNI
 func (c KindNet) Apply(r Runner) error {
 	// This is mostly applicable to the 'none' driver
-	_, err := r.RunCmd(exec.Command("stat", "/opt/cni/bin/portmap"))
-	if err != nil {
-		return errors.Wrap(err, "required 'portmap' CNI plug-in not found")
+	if _, err := r.RunCmd(exec.Command("stat", "/opt/cni/bin/portmap")); err != nil {
+		return fmt.Errorf("required 'portmap' CNI plug-in not found: %w", err)
 	}
 
 	m, err := c.manifest()
 	if err != nil {
-		return errors.Wrap(err, "manifest")
+		return fmt.Errorf("manifest: %w", err)
 	}
 	return applyManifest(c.cc, r, m)
 }

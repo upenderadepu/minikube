@@ -20,7 +20,23 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
+
+// rewriteLogFile resets the magic "log_file" flag
+// otherwise it starts out under $TMP somewhere
+// and shows up as Changed, to default value ""
+func rewriteLogFile() error {
+	flag := pflag.Lookup("log_file")
+	if flag != nil {
+		// don't show the default value
+		err := pflag.Set("log_file", "")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type rewrite struct {
 	flag       string
@@ -39,6 +55,10 @@ func rewriteFlags(command *cobra.Command) error {
 		}, {
 			flag:  "mount-string",
 			usage: "The argument to pass the minikube mount command on start.",
+		}, {
+			flag:       "iso-url",
+			usage:      "Locations to fetch the minikube ISO from. The list depends on the machine architecture.",
+			defaultVal: "[]",
 		}},
 	}
 	rws, ok := rewrites[command.Name()]

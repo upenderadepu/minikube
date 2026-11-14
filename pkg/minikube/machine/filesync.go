@@ -23,7 +23,6 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/minikube/pkg/minikube/assets"
 	"k8s.io/minikube/pkg/minikube/command"
@@ -43,6 +42,14 @@ var guaranteed = map[string]bool{
 // syncLocalAssets syncs files from MINIKUBE_HOME into the cluster
 func syncLocalAssets(cr command.Runner) error {
 	fs, err := localAssets()
+	defer func() {
+		for _, f := range fs {
+			if err := f.Close(); err != nil {
+				klog.Warningf("error closing the file %s: %v", f.GetSourcePath(), err)
+			}
+		}
+	}()
+
 	if err != nil {
 		return err
 	}
@@ -84,12 +91,12 @@ func syncLocalAssets(cr command.Runner) error {
 func localAssets() ([]assets.CopyableFile, error) {
 	fs, err := assetsFromDir(localpath.MakeMiniPath("addons"), vmpath.GuestAddonsDir, true)
 	if err != nil {
-		return fs, errors.Wrap(err, "addons dir")
+		return fs, fmt.Errorf("addons dir: %w", err)
 	}
 
 	localFiles, err := assetsFromDir(localpath.MakeMiniPath("files"), "/", false)
 	if err != nil {
-		return fs, errors.Wrap(err, "files dir")
+		return fs, fmt.Errorf("files dir: %w", err)
 	}
 
 	fs = append(fs, localFiles...)
@@ -141,7 +148,7 @@ func assetsFromDir(localRoot string, destRoot string, flatten bool) ([]assets.Co
 		klog.Infof("local asset: %s -> %s in %s", localPath, targetName, targetDir)
 		f, err := assets.NewFileAsset(localPath, targetDir, targetName, ps)
 		if err != nil {
-			return errors.Wrapf(err, "creating file asset for %s", localPath)
+			return fmt.Errorf("creating file asset for %s: %w", localPath, err)
 		}
 		fs = append(fs, f)
 		return nil

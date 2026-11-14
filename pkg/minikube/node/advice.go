@@ -17,18 +17,22 @@ limitations under the License.
 package node
 
 import (
+	"fmt"
 	"runtime"
 
-	"github.com/pkg/errors"
+	"errors"
+
 	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/bootstrapper/kubeadm"
+	"k8s.io/minikube/pkg/minikube/cruntime"
 	"k8s.io/minikube/pkg/minikube/exit"
+	"k8s.io/minikube/pkg/minikube/out"
 	"k8s.io/minikube/pkg/minikube/reason"
 	"k8s.io/minikube/pkg/minikube/style"
 )
 
 // ExitIfFatal before exiting will try to check for different error types and provide advice if we know for sure what the error is
-func ExitIfFatal(err error) {
+func ExitIfFatal(err error, force bool) {
 	if err == nil {
 		return
 	}
@@ -50,7 +54,10 @@ func ExitIfFatal(err error) {
 		if runtime.GOOS == "windows" {
 			exit.Message(reason.RsrcInsufficientWindowsDockerCores, "Docker Desktop has less than 2 CPUs configured, but Kubernetes requires at least 2 to be available")
 		}
-		exit.Message(reason.RsrcInsufficientCores, "Docker has less than 2 CPUs available, but Kubernetes requires at least 2 to be available")
+		if !force {
+			exit.Message(reason.RsrcInsufficientCores, "Docker has less than 2 CPUs available, but Kubernetes requires at least 2 to be available")
+		}
+		out.Error(reason.RsrcInsufficientCores, "Docker has less than 2 CPUs available, but Kubernetes requires at least 2 to be available")
 	}
 
 	if errors.Is(err, kubeadm.ErrNoExecLinux) {
@@ -61,5 +68,15 @@ func ExitIfFatal(err error) {
 			Issues:   []int{8327},
 			Advice:   "Ensure that your Docker mountpoints do not have the 'noexec' flag set",
 		}, "The kubeadm binary within the Docker container is not executable")
+	}
+
+	if rtErr, ok := err.(*cruntime.ErrServiceVersion); ok {
+		exit.Message(reason.Kind{
+			ID:       "PROVIDER_INVALID_VERSION",
+			ExitCode: reason.ExGuestConfig,
+			Style:    style.Unsupported,
+			Advice:   "Try to start minikube with '--delete-on-failure=true' option",
+		}, fmt.Sprintf("Your existing minikube instance has version %s of service %v which is too old. "+
+			"Please try to start minikube with --delete-on-failure=true option", rtErr.Installed, rtErr.Service))
 	}
 }

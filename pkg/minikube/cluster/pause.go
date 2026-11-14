@@ -17,12 +17,14 @@ limitations under the License.
 package cluster
 
 import (
+	"fmt"
+	"slices"
 	"time"
 
-	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/minikube/pkg/minikube/command"
 	"k8s.io/minikube/pkg/minikube/cruntime"
+	pkgpause "k8s.io/minikube/pkg/minikube/pause"
 	"k8s.io/minikube/pkg/minikube/sysinit"
 	"k8s.io/minikube/pkg/util/retry"
 )
@@ -47,17 +49,15 @@ func pause(cr cruntime.Manager, r command.Runner, namespaces []string) ([]string
 
 	// Disable the kubelet so it does not attempt to restart paused pods
 	sm := sysinit.New(r)
-	if err := sm.Disable("kubelet"); err != nil {
-		return ids, errors.Wrap(err, "kubelet disable")
+	klog.Info("kubelet running: ", sm.Active("kubelet"))
+
+	if err := sm.DisableNow("kubelet"); err != nil {
+		return ids, fmt.Errorf("kubelet disable --now: %w", err)
 	}
 
-	if err := sm.Stop("kubelet"); err != nil {
-		return ids, errors.Wrap(err, "kubelet stop")
-	}
-
-	ids, err := cr.ListContainers(cruntime.ListOptions{State: cruntime.Running, Namespaces: namespaces})
+	ids, err := cr.ListContainers(cruntime.ListContainersOptions{State: cruntime.Running, Namespaces: namespaces})
 	if err != nil {
-		return ids, errors.Wrap(err, "list running")
+		return ids, fmt.Errorf("list running: %w", err)
 	}
 
 	if len(ids) == 0 {
@@ -65,7 +65,15 @@ func pause(cr cruntime.Manager, r command.Runner, namespaces []string) ([]string
 		return ids, nil
 	}
 
-	return ids, cr.PauseContainers(ids)
+	if err := cr.PauseContainers(ids); err != nil {
+		return ids, fmt.Errorf("pausing containers: %w", err)
+	}
+
+	if doesNamespaceContainKubeSystem(namespaces) {
+		pkgpause.CreatePausedFile(r)
+	}
+
+	return ids, nil
 }
 
 // Unpause unpauses a Kubernetes cluster, retrying if necessary
@@ -84,22 +92,50 @@ func Unpause(cr cruntime.Manager, r command.Runner, namespaces []string) ([]stri
 
 // unpause unpauses a Kubernetes cluster
 func unpause(cr cruntime.Manager, r command.Runner, namespaces []string) ([]string, error) {
-	ids, err := cr.ListContainers(cruntime.ListOptions{State: cruntime.Paused, Namespaces: namespaces})
+	ids, err := cr.ListContainers(cruntime.ListContainersOptions{State: cruntime.Paused, Namespaces: namespaces})
 	if err != nil {
-		return ids, errors.Wrap(err, "list paused")
+		return ids, fmt.Errorf("list paused: %w", err)
 	}
 
 	if len(ids) == 0 {
 		klog.Warningf("no paused containers found")
 	} else if err := cr.UnpauseContainers(ids); err != nil {
-		return ids, errors.Wrap(err, "unpause")
+		return ids, fmt.Errorf("unpause: %w", err)
 	}
 
 	sm := sysinit.New(r)
 
 	if err := sm.Start("kubelet"); err != nil {
-		return ids, errors.Wrap(err, "kubelet start")
+		return ids, fmt.Errorf("kubelet start: %w", err)
+	}
+
+	if doesNamespaceContainKubeSystem(namespaces) {
+		pkgpause.RemovePausedFile(r)
 	}
 
 	return ids, nil
+}
+
+// CheckIfPaused checks if the Kubernetes cluster is paused
+func CheckIfPaused(cr cruntime.Manager, namespaces []string) (bool, error) {
+	ids, err := cr.ListContainers(cruntime.ListContainersOptions{State: cruntime.Paused, Namespaces: namespaces})
+	if err != nil {
+		return true, fmt.Errorf("list paused: %w", err)
+	}
+
+	if len(ids) > 0 {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// doesNamespaceContainKubeSystem returns true if kube-system is contained in the namespace list
+// This is used to only mark the apiserver as paused/unpaused when the kube-system namespace is specified
+func doesNamespaceContainKubeSystem(namespaces []string) bool {
+	// nil slice indicates all namespaces
+	if namespaces == nil {
+		return true
+	}
+	return slices.Contains(namespaces, "kube-system")
 }

@@ -18,22 +18,24 @@ limitations under the License.
 package kverify
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	kconst "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/minikube/pkg/minikube/bootstrapper"
 	"k8s.io/minikube/pkg/minikube/command"
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/cruntime"
 	"k8s.io/minikube/pkg/minikube/logs"
 	"k8s.io/minikube/pkg/util/retry"
+	kconst "k8s.io/minikube/third_party/kubeadm/app/constants"
 )
 
 // WaitForSystemPods verifies essential pods for running kurnetes is running
@@ -48,7 +50,7 @@ func WaitForSystemPods(r cruntime.Manager, bs bootstrapper.Bootstrapper, cfg con
 		}
 
 		// Wait for any system pod, as waiting for apiserver may block until etcd
-		pods, err := client.CoreV1().Pods("kube-system").List(meta.ListOptions{})
+		pods, err := client.CoreV1().Pods("kube-system").List(context.Background(), meta.ListOptions{})
 		if err != nil {
 			klog.Warningf("pod list returned error: %v", err)
 			return err
@@ -56,7 +58,7 @@ func WaitForSystemPods(r cruntime.Manager, bs bootstrapper.Bootstrapper, cfg con
 
 		klog.Infof("%d kube-system pods found", len(pods.Items))
 		for _, pod := range pods.Items {
-			klog.Infof(podStatusMsg(pod))
+			klog.Info(podStatusMsg(pod))
 		}
 
 		if len(pods.Items) < 2 {
@@ -67,7 +69,7 @@ func WaitForSystemPods(r cruntime.Manager, bs bootstrapper.Bootstrapper, cfg con
 	}
 
 	if err := retry.Local(podList, timeout); err != nil {
-		return fmt.Errorf("apiserver never returned a pod list")
+		return errors.New("apiserver never returned a pod list")
 	}
 	klog.Infof("duration metric: took %s to wait for pod list to return data ...", time.Since(pStart))
 	return nil
@@ -77,20 +79,20 @@ func WaitForSystemPods(r cruntime.Manager, bs bootstrapper.Bootstrapper, cfg con
 func ExpectAppsRunning(cs *kubernetes.Clientset, expected []string) error {
 	found := map[string]bool{}
 
-	pods, err := cs.CoreV1().Pods("kube-system").List(meta.ListOptions{})
+	pods, err := cs.CoreV1().Pods("kube-system").List(context.Background(), meta.ListOptions{})
 	if err != nil {
 		return err
 	}
 	klog.Infof("%d kube-system pods found", len(pods.Items))
 
 	for _, pod := range pods.Items {
-		klog.Infof(podStatusMsg(pod))
+		klog.Info(podStatusMsg(pod))
 
 		if pod.Status.Phase != core.PodRunning {
 			continue
 		}
 
-		for k, v := range pod.ObjectMeta.Labels {
+		for k, v := range pod.Labels {
 			if k == "component" || k == "k8s-app" {
 				found[v] = true
 			}
@@ -119,7 +121,7 @@ func WaitForAppsRunning(cs *kubernetes.Clientset, expected []string, timeout tim
 	}
 
 	if err := retry.Local(checkRunning, timeout); err != nil {
-		return errors.Wrapf(err, "expected k8s-apps")
+		return fmt.Errorf("expected k8s-apps: %w", err)
 	}
 	klog.Infof("duration metric: took %s to wait for k8s-apps to be running ...", time.Since(start))
 	return nil
@@ -128,7 +130,7 @@ func WaitForAppsRunning(cs *kubernetes.Clientset, expected []string, timeout tim
 // podStatusMsg returns a human-readable pod status, for generating debug status
 func podStatusMsg(pod core.Pod) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%q [%s] %s", pod.ObjectMeta.GetName(), pod.ObjectMeta.GetUID(), pod.Status.Phase))
+	fmt.Fprintf(&sb, "%q [%s] %s", pod.GetName(), pod.GetUID(), pod.Status.Phase)
 	for i, c := range pod.Status.Conditions {
 		if c.Reason != "" {
 			if i == 0 {
@@ -136,10 +138,10 @@ func podStatusMsg(pod core.Pod) string {
 			} else {
 				sb.WriteString(" / ")
 			}
-			sb.WriteString(fmt.Sprintf("%s:%s", c.Type, c.Reason))
+			fmt.Fprintf(&sb, "%s:%s", c.Type, c.Reason)
 		}
 		if c.Message != "" {
-			sb.WriteString(fmt.Sprintf(" (%s)", c.Message))
+			fmt.Fprintf(&sb, " (%s)", c.Message)
 		}
 	}
 	return sb.String()
@@ -149,7 +151,7 @@ func podStatusMsg(pod core.Pod) string {
 func announceProblems(r cruntime.Manager, bs bootstrapper.Bootstrapper, cfg config.ClusterConfig, cr command.Runner) {
 	problems := logs.FindProblems(r, bs, cfg, cr)
 	if len(problems) > 0 {
-		logs.OutputProblems(problems, 5)
+		logs.OutputProblems(problems, 5, os.Stderr)
 		time.Sleep(kconst.APICallRetryInterval * 15)
 	}
 }

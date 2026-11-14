@@ -17,49 +17,46 @@ limitations under the License.
 package addons
 
 import (
-	"runtime"
+	"fmt"
 	"strconv"
 
-	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/minikube/pkg/drivers/kic/oci"
 	"k8s.io/minikube/pkg/minikube/config"
 	"k8s.io/minikube/pkg/minikube/constants"
 	"k8s.io/minikube/pkg/minikube/driver"
-	"k8s.io/minikube/pkg/minikube/exit"
 	"k8s.io/minikube/pkg/minikube/kubeconfig"
 	"k8s.io/minikube/pkg/minikube/mustload"
 	"k8s.io/minikube/pkg/minikube/out"
-	"k8s.io/minikube/pkg/minikube/reason"
+	"k8s.io/minikube/pkg/minikube/run"
 	"k8s.io/minikube/pkg/minikube/sysinit"
 )
 
-// enableOrDisableAutoPause enables the service after the config was copied by generic enble
-func enableOrDisableAutoPause(cc *config.ClusterConfig, name string, val string) error {
+// enableOrDisableAutoPause enables the service after the config was copied by generic enable.
+func enableOrDisableAutoPause(cc *config.ClusterConfig, name, val string, options *run.CommandOptions) error {
 	enable, err := strconv.ParseBool(val)
 	if err != nil {
-		return errors.Wrapf(err, "parsing bool: %s", name)
+		return fmt.Errorf("parsing bool: %s: %w", name, err)
 	}
 	out.Infof("auto-pause addon is an alpha feature and still in early development. Please file issues to help us make it better.")
-	out.Infof("https://github.com/kubernetes/minikube/labels/co%2Fauto-pause")
+	out.Infof("https://github.com/kubernetes/minikube/issues?q=state%3Aopen%20label%3Aco%2Fauto-pause")
 
-	if !driver.IsKIC(cc.Driver) || runtime.GOARCH != "amd64" {
-		exit.Message(reason.Usage, `auto-pause currently is only supported on docker driver/docker runtime/amd64. Track progress of others here: https://github.com/kubernetes/minikube/issues/10601`)
-	}
-	co := mustload.Running(cc.Name)
+	co := mustload.Running(cc.Name, options)
 	if enable {
 		if err := sysinit.New(co.CP.Runner).EnableNow("auto-pause"); err != nil {
 			klog.ErrorS(err, "failed to enable", "service", "auto-pause")
+			return err
 		}
 	}
 
-	port := co.CP.Port // api server port
-	if enable {        // if enable then need to calculate the forwarded port
+	port := co.CP.Port // API server port
+	if enable {        // if enable, calculate the forwarded port
 		port = constants.AutoPauseProxyPort
 		if driver.NeedsPortForward(cc.Driver) {
 			port, err = oci.ForwardedPort(cc.Driver, cc.Name, port)
 			if err != nil {
 				klog.ErrorS(err, "failed to get forwarded port for", "auto-pause port", port)
+				return err
 			}
 		}
 	}
@@ -70,7 +67,7 @@ func enableOrDisableAutoPause(cc *config.ClusterConfig, name string, val string)
 		return err
 	}
 	if updated {
-		klog.Infof("%s context has been updated to point to auto-pause proxy %s:%s", cc.Name, co.CP.Hostname, co.CP.Port)
+		klog.Infof("%s context has been updated to point to auto-pause proxy %s:%d", cc.Name, co.CP.Hostname, port)
 	} else {
 		klog.Info("no need to update kube-context for auto-pause proxy")
 	}
